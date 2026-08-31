@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.npm-cache/
+.tmp-fenbi-profile*/
+.env
+.env.*
+!.env.example
+coverage/
+*.log
+.DS_Store

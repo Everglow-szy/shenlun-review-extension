@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "申论智能练习与批改助手",
+  "description": "在 Edge Side Panel 中练习申论，并使用 ChatGPT 或 DeepSeek 批改。",
+  "version": "1.0.0",
+  "minimum_chrome_version": "141",
+  "action": {
+    "default_title": "打开申论智能练习助手"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "sidePanel",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://api.deepseek.com/*"
+  ],
+  "background": {
+    "service_worker": "assets/service-worker.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "assets/chatgpt-content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}
