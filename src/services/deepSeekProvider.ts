@@ -15,6 +15,7 @@ export class DeepSeekProviderError extends Error {
 interface DeepSeekResponse {
   readonly choices?: readonly {
     readonly message?: { readonly content?: string | null };
+    readonly finish_reason?: "stop" | "length" | "content_filter" | "tool_calls" | "insufficient_system_resource" | null;
   }[];
   readonly error?: { readonly message?: string; readonly code?: string };
 }
@@ -78,7 +79,7 @@ export async function requestDeepSeekFeedback(input: {
         messages: [{ role: "user", content: input.prompt }],
         thinking: { type: model.thinking },
         stream: false,
-        max_tokens: 8_192,
+        max_tokens: 32_768,
       }),
       signal: controller.signal,
     });
@@ -93,11 +94,33 @@ export async function requestDeepSeekFeedback(input: {
         response.status === 429 || response.status >= 500,
       );
     }
-    const content = data?.choices?.[0]?.message?.content?.trim();
+    const choice = data?.choices?.[0];
+    const content = choice?.message?.content?.trim();
     if (!content) {
       throw new DeepSeekProviderError(
         "DEEPSEEK_EMPTY_RESPONSE",
         "DeepSeek API 返回成功，但没有可保存的批改内容。",
+        true,
+      );
+    }
+    if (choice?.finish_reason === "length") {
+      throw new DeepSeekProviderError(
+        "DEEPSEEK_RESPONSE_TRUNCATED",
+        "DeepSeek 达到输出长度上限，返回内容可能不完整。本次结果未保存，请缩短提示词或重新提交。",
+        true,
+      );
+    }
+    if (choice?.finish_reason === "content_filter") {
+      throw new DeepSeekProviderError(
+        "DEEPSEEK_RESPONSE_FILTERED",
+        "DeepSeek 因内容过滤未返回完整结果，本次结果未保存。",
+        false,
+      );
+    }
+    if (choice?.finish_reason === "insufficient_system_resource") {
+      throw new DeepSeekProviderError(
+        "DEEPSEEK_RESOURCE_INTERRUPTED",
+        "DeepSeek 因服务资源不足中断生成，本次结果未保存，请稍后重试。",
         true,
       );
     }

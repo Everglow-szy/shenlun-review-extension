@@ -48,14 +48,19 @@ export function parseFeedbackModules(rawText: string): readonly FeedbackModule[]
   for (const line of normalized.split("\n")) {
     const nextTitle = moduleTitle(line);
     if (nextTitle) {
-      flush();
+      if (title) {
+        flush();
+      } else {
+        const preamble = content.join("\n").trim();
+        if (preamble) modules.push({ title: "补充说明", content: preamble });
+      }
       title = nextTitle;
       content = [];
     } else {
       content.push(line);
     }
   }
-  flush();
+  if (title) flush();
 
   return modules.length > 0
     ? modules

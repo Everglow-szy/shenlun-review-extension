@@ -46,6 +46,27 @@ describe("DeepSeek API provider", () => {
       messages: [{ role: "user", content: "请批改" }],
       thinking: { type: "disabled" },
       stream: false,
+      max_tokens: 32_768,
+    });
+  });
+
+  it("rejects a response explicitly truncated by the API", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      choices: [{
+        finish_reason: "length",
+        message: { content: "## 得分\n16 / 20\n\n## 修改建议\n未完成" },
+      }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } })) as unknown as typeof fetch;
+
+    await expect(requestDeepSeekFeedback({
+      apiKey: "sk-test-only",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-pro-thinking",
+      prompt: "请批改",
+      fetchImpl,
+    })).rejects.toMatchObject({
+      code: "DEEPSEEK_RESPONSE_TRUNCATED",
+      retryable: true,
     });
   });
 

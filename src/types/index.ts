@@ -1,3 +1,8 @@
+import {
+  DEFAULT_FULL_PAPER_PROMPT_TEMPLATE,
+  DEFAULT_SINGLE_QUESTION_PROMPT_TEMPLATE,
+} from "../services/promptTemplates";
+
 /** Current shape version for every object persisted by the extension. */
 export const PERSISTED_ENTITY_VERSION = 1 as const;
 
@@ -181,6 +186,8 @@ export interface AppSettings extends PersistedEntity {
   readonly gradingModel: GradingModelId;
   readonly deepseekApiBaseUrl: string;
   readonly deepseekApiKey: string;
+  readonly singleQuestionPromptTemplate: string;
+  readonly fullPaperPromptTemplate: string;
   readonly autoSave: boolean;
   readonly showWordCount: boolean;
   readonly showQuestionTimer: boolean;
@@ -199,6 +206,8 @@ export interface AppSettingsPatch {
   readonly gradingModel?: GradingModelId;
   readonly deepseekApiBaseUrl?: string;
   readonly deepseekApiKey?: string;
+  readonly singleQuestionPromptTemplate?: string;
+  readonly fullPaperPromptTemplate?: string;
   readonly autoSave?: boolean;
   readonly showWordCount?: boolean;
   readonly showQuestionTimer?: boolean;
@@ -218,6 +227,8 @@ export const DEFAULT_SETTINGS: Readonly<AppSettings> = {
   gradingModel: "chatgpt-project-default",
   deepseekApiBaseUrl: "https://api.deepseek.com",
   deepseekApiKey: "",
+  singleQuestionPromptTemplate: DEFAULT_SINGLE_QUESTION_PROMPT_TEMPLATE,
+  fullPaperPromptTemplate: DEFAULT_FULL_PAPER_PROMPT_TEMPLATE,
   autoSave: true,
   showWordCount: true,
   showQuestionTimer: true,
@@ -293,6 +304,7 @@ export interface SingleQuestionPromptInput {
   readonly paperName: string;
   readonly attemptId: AttemptId;
   readonly question: QuestionAttempt;
+  readonly template?: string;
 }
 
 export interface FullPaperPromptInput {
@@ -300,6 +312,7 @@ export interface FullPaperPromptInput {
   readonly attemptId: AttemptId;
   readonly questions: readonly QuestionAttempt[];
   readonly totalElapsedSeconds: number;
+  readonly template?: string;
 }
 
 export type FeedbackSubmissionMode = "single-question" | "full-paper";

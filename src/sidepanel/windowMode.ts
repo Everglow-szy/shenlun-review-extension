@@ -10,9 +10,19 @@ export interface FloatingWindowSize {
   readonly height: number;
 }
 
+export interface DocumentPictureInPictureApi {
+  readonly window: Window | null;
+  requestWindow(options?: {
+    readonly width?: number;
+    readonly height?: number;
+    readonly disallowReturnToOpener?: boolean;
+  }): Promise<Window>;
+}
+
 export const FLOATING_WINDOW_SIZE_KEY = "shenlun.floatingWindowSize.v1";
 export const FLOATING_WINDOW_SESSION_KEY = "shenlun.floatingWindowSession.v1";
 export const RESTORE_WITHOUT_SCAN_KEY = "shenlun.restoreWithoutScanOnce.v1";
+export const FLOATING_ALWAYS_ON_TOP_SIZE_KEY = "shenlun.floatingAlwaysOnTopSize.v1";
 
 export const DEFAULT_FLOATING_WINDOW_SIZE: FloatingWindowSize = {
   width: 500,
@@ -54,6 +64,33 @@ export function floatingPageUrl(extensionPageUrl: string, sourceWindowId: number
   url.searchParams.set("mode", "floating");
   url.searchParams.set("sourceWindowId", String(sourceWindowId));
   return url.toString();
+}
+
+export function documentPictureInPictureApi(
+  hostWindow: Window,
+): DocumentPictureInPictureApi | null {
+  const candidate = (hostWindow as Window & {
+    readonly documentPictureInPicture?: DocumentPictureInPictureApi;
+  }).documentPictureInPicture;
+  return candidate && typeof candidate.requestWindow === "function" ? candidate : null;
+}
+
+export function copyDocumentStyles(source: Document, target: Document): void {
+  for (const node of source.querySelectorAll<HTMLLinkElement | HTMLStyleElement>(
+    'link[rel="stylesheet"], style',
+  )) {
+    if (node instanceof HTMLLinkElement) {
+      const link = target.createElement("link");
+      link.rel = "stylesheet";
+      link.href = node.href;
+      if (node.media) link.media = node.media;
+      target.head.append(link);
+    } else {
+      const style = target.createElement("style");
+      style.textContent = node.textContent;
+      target.head.append(style);
+    }
+  }
 }
 
 export function consumeRestoreWithoutScan(storage: Storage | null): boolean {

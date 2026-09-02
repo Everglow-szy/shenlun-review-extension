@@ -22,6 +22,8 @@ describe("SettingsRepository grading engine settings", () => {
       gradingEngine: "deepseek-api",
       deepseekApiBaseUrl: "https://api.deepseek.com",
       deepseekApiKey: "sk-local-test-only",
+      singleQuestionPromptTemplate: "单题 {{题目}}",
+      fullPaperPromptTemplate: "整卷 {{题目列表}}",
     }, 100);
     expect(deepseek).toMatchObject({
       gradingEngine: "deepseek-api",
@@ -41,6 +43,24 @@ describe("SettingsRepository grading engine settings", () => {
       gradingEngine: "chatgpt-web",
       gradingModel: "chatgpt-project-default",
       deepseekApiKey: "sk-local-test-only",
+      singleQuestionPromptTemplate: "单题 {{题目}}",
+      fullPaperPromptTemplate: "整卷 {{题目列表}}",
     });
+  });
+
+  it("falls back to safe default templates when a saved template is blank", async () => {
+    const database = await openShenlunDatabase({
+      factory: new IDBFactory(),
+      name: "prompt-template-settings-test",
+    });
+    databases.push(database);
+    const repository = new SettingsRepository(() => Promise.resolve(database));
+
+    const saved = await repository.save({
+      singleQuestionPromptTemplate: "   ",
+      fullPaperPromptTemplate: "\n",
+    });
+    expect(saved.singleQuestionPromptTemplate).toContain("{{考生答案}}");
+    expect(saved.fullPaperPromptTemplate).toContain("{{题目列表}}");
   });
 });

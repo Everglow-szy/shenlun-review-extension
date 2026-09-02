@@ -66,4 +66,25 @@ describe("prompt builders", () => {
       }),
     ).toThrow(/isolation/u);
   });
+
+  it("renders user-editable templates with current attempt placeholders", () => {
+    const single = buildSingleQuestionPrompt({
+      paperName: "自定义试卷",
+      attemptId: "attempt-a",
+      question: question("attempt-a", "q1", "自定义答案"),
+      template: "卷={{试卷名称}}；题={{题号}}；答案={{考生答案}}；材料={{材料}}",
+    });
+    expect(single).toContain("卷=自定义试卷；题=第1题；答案=自定义答案");
+    expect(single).toContain("材料1：\n材料内容");
+
+    const full = buildFullPaperPrompt({
+      paperName: "自定义试卷",
+      attemptId: "attempt-a",
+      questions: [question("attempt-a", "q1", "整卷答案")],
+      totalElapsedSeconds: 90,
+      template: "{{试卷名称}}\n{{题目列表}}\n总用时={{整卷总用时}}",
+    });
+    expect(full).toContain("整卷答案");
+    expect(full).toContain("总用时=00:01:30");
+  });
 });

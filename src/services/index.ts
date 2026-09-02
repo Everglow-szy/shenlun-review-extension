@@ -4,5 +4,6 @@ export * from "./gradingEngines";
 export * from "./deepSeekProvider";
 export * from "./practiceService";
 export * from "./promptBuilder";
+export * from "./promptTemplates";
 export * from "./timerService";
 export * from "./wordCountService";

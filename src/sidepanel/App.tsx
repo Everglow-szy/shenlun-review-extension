@@ -5,6 +5,7 @@ import {
   parseFeedbackScore,
   pauseTimer,
   practiceService,
+  type LocalDataDeletionSelection,
   type TimerCoordinatorSnapshot,
 } from "../services";
 import {
@@ -36,7 +37,10 @@ import { RuntimeRequestError, sendRuntimeRequest } from "./runtimeClient";
 import {
   FLOATING_WINDOW_SESSION_KEY,
   FLOATING_WINDOW_SIZE_KEY,
+  FLOATING_ALWAYS_ON_TOP_SIZE_KEY,
+  copyDocumentStyles,
   consumeRestoreWithoutScan,
+  documentPictureInPictureApi,
   floatingPageUrl,
   normalizeFloatingWindowSize,
   parseAppDisplayContext,
@@ -105,6 +109,15 @@ interface FloatingWindowSession {
   readonly sourceWindowId: number;
 }
 
+interface FloatingAlwaysOnTopSession {
+  readonly pipWindow: Window;
+  readonly root: HTMLElement;
+  readonly marker: Comment;
+  readonly browserWindowId: number;
+  readonly onPageHide: () => void;
+  readonly onResize: () => void;
+}
+
 interface SidePanelCloseApi {
   close(options: { readonly windowId: number }): Promise<void>;
 }
@@ -123,6 +136,20 @@ function parseFloatingWindowSession(value: unknown): FloatingWindowSession | nul
     Number.isSafeInteger(candidate.sourceWindowId) && candidate.sourceWindowId > 0
     ? { windowId: candidate.windowId, sourceWindowId: candidate.sourceWindowId }
     : null;
+}
+
+function clearPracticeLocalStorage(storage: Storage | null): void {
+  if (!storage) return;
+  const keys: string[] = [];
+  try {
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith("shenlun.")) keys.push(key);
+    }
+    for (const key of keys) storage.removeItem(key);
+  } catch {
+    // IndexedDB remains authoritative even if a stale emergency mirror cannot be removed.
+  }
 }
 
 function friendlyError(error: unknown): string {
@@ -489,6 +516,9 @@ export function App(): JSX.Element {
   const [duplicate, setDuplicate] = useState<DuplicateState | null>(null);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [windowModeBusy, setWindowModeBusy] = useState(false);
+  const [floatingAlwaysOnTop, setFloatingAlwaysOnTop] = useState(false);
+  const [dataDeletionRequest, setDataDeletionRequest] = useState<LocalDataDeletionSelection | null>(null);
+  const [dataDeleting, setDataDeleting] = useState(false);
   const [pendingSubmission, setPendingSubmission] = useState<PendingSubmission | null>(null);
   const initializedRef = useRef(false);
   const panelContextIdRef = useRef(createPendingRequestId());
@@ -497,6 +527,12 @@ export function App(): JSX.Element {
   const runtimeAttemptRevisionRef = useRef(new Map<string, number>());
   const draftSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const draftSaveSequenceRef = useRef(0);
+  const dataDeletionInProgressRef = useRef(false);
+  const floatingAlwaysOnTopSessionRef = useRef<FloatingAlwaysOnTopSession | null>(null);
+  const floatingAlwaysOnTopSizeRef = useRef(normalizeFloatingWindowSize({
+    width: window.outerWidth,
+    height: window.outerHeight,
+  }));
   const bundleRef = useRef(bundle);
   const activeQuestionRef = useRef(activeQuestionId);
   const pendingSubmissionRef = useRef(pendingSubmission);
@@ -505,6 +541,17 @@ export function App(): JSX.Element {
   activeQuestionRef.current = activeQuestionId;
   pendingSubmissionRef.current = pendingSubmission;
   settingsRef.current = settings;
+
+  useEffect(() => {
+    if (displayContext.mode !== "floating" || typeof chrome === "undefined" || !chrome.storage?.local) {
+      return;
+    }
+    void chrome.storage.local.get(FLOATING_ALWAYS_ON_TOP_SIZE_KEY).then((stored) => {
+      floatingAlwaysOnTopSizeRef.current = normalizeFloatingWindowSize(
+        stored[FLOATING_ALWAYS_ON_TOP_SIZE_KEY],
+      );
+    }).catch(() => undefined);
+  }, [displayContext.mode]);
 
   const readPendingForAttempt = useCallback((attemptId: string): PendingSubmission | null => {
     const stored = readPendingSubmission(getDraftStorage(), attemptId);
@@ -554,7 +601,12 @@ export function App(): JSX.Element {
   }, [notice]);
 
   useEffect(() => {
-    if (displayContext.mode !== "floating" || typeof chrome === "undefined" || !chrome.storage?.local) {
+    if (
+      displayContext.mode !== "floating" ||
+      floatingAlwaysOnTop ||
+      typeof chrome === "undefined" ||
+      !chrome.storage?.local
+    ) {
       return undefined;
     }
     let timer: number | undefined;
@@ -575,7 +627,7 @@ export function App(): JSX.Element {
       persistSize();
       window.removeEventListener("resize", handleResize);
     };
-  }, [displayContext.mode]);
+  }, [displayContext.mode, floatingAlwaysOnTop]);
 
   useEffect(() => {
     const syncPendingSubmission = (event: StorageEvent): void => {
@@ -611,6 +663,7 @@ export function App(): JSX.Element {
     attemptId: string,
     snapshot: TimerCoordinatorSnapshot,
   ): Promise<void> => {
+    if (dataDeletionInProgressRef.current) return;
     const storage = getDraftStorage();
     cachePendingTimerCheckpoint(storage, attemptId, snapshot);
     try {
@@ -643,6 +696,7 @@ export function App(): JSX.Element {
   ]);
 
   const saveCurrentDraft = useCallback((announce = true): Promise<void> => {
+    if (dataDeletionInProgressRef.current) return Promise.resolve();
     const current = bundleRef.current;
     const questionId = activeQuestionRef.current;
     const question = current?.questions.find((item) => item.questionId === questionId);
@@ -1736,6 +1790,62 @@ export function App(): JSX.Element {
     }
   };
 
+  const confirmLocalDataDeletion = async (): Promise<void> => {
+    const selection = dataDeletionRequest;
+    if (!selection || dataDeleting) return;
+    setDataDeleting(true);
+    dataDeletionInProgressRef.current = true;
+    try {
+      await draftSaveQueueRef.current.catch(() => undefined);
+      await practiceService.clearLocalData(selection);
+      if (selection.practiceData) {
+        clearPracticeLocalStorage(getDraftStorage());
+        if (typeof chrome !== "undefined" && chrome.storage?.local) {
+          await chrome.storage.local.remove(ACTIVE_ATTEMPT_KEY);
+        }
+        if (typeof chrome !== "undefined" && chrome.storage?.session) {
+          await chrome.storage.session.remove("bridge.chatgptTabs.v1");
+        }
+        ++installGenerationRef.current;
+        bundleRef.current = null;
+        activeQuestionRef.current = null;
+        pendingSubmissionRef.current = null;
+        setBundle(null);
+        setActiveQuestionId(null);
+        setPendingSubmission(null);
+        setHistory([]);
+        setSaveState("idle");
+        setDuplicate(null);
+      }
+      if (selection.settings) {
+        if (typeof chrome !== "undefined" && chrome.storage?.local) {
+          await chrome.storage.local.remove([
+            FLOATING_WINDOW_SIZE_KEY,
+            FLOATING_ALWAYS_ON_TOP_SIZE_KEY,
+          ]);
+        }
+        const resetSettings = await practiceService.getSettings();
+        floatingAlwaysOnTopSizeRef.current = normalizeFloatingWindowSize(null);
+        settingsRef.current = resetSettings;
+        setSettings(resetSettings);
+      }
+      setDataDeletionRequest(null);
+      showNotice(
+        "success",
+        selection.practiceData && selection.settings
+          ? "练习记录与应用设置已从本机删除。"
+          : selection.practiceData
+            ? "练习与批改记录已从本机删除，应用设置已保留。"
+            : "应用设置与密钥已从本机删除，练习记录已保留。",
+      );
+    } catch (error) {
+      showNotice("error", `删除本地数据失败：${friendlyError(error)}`);
+    } finally {
+      dataDeletionInProgressRef.current = false;
+      setDataDeleting(false);
+    }
+  };
+
   const changeGradingTarget = (target: GradingTarget): void => {
     setSettings((current) => ({
       ...current,
@@ -1821,6 +1931,103 @@ export function App(): JSX.Element {
     else window.open(conversationUrl, "_blank", "noopener,noreferrer");
   };
 
+  const restoreFloatingAlwaysOnTop = useCallback((focusPopup: boolean): void => {
+    const session = floatingAlwaysOnTopSessionRef.current;
+    if (!session) return;
+    floatingAlwaysOnTopSessionRef.current = null;
+    session.pipWindow.removeEventListener("pagehide", session.onPageHide);
+    session.pipWindow.removeEventListener("resize", session.onResize);
+    if (session.marker.parentNode) {
+      session.marker.parentNode.insertBefore(session.root, session.marker);
+      session.marker.remove();
+    }
+    setFloatingAlwaysOnTop(false);
+    if (focusPopup && typeof chrome !== "undefined" && chrome.windows) {
+      void chrome.windows.update(session.browserWindowId, { state: "normal", focused: true })
+        .catch(() => undefined);
+    }
+  }, []);
+
+  const toggleFloatingAlwaysOnTop = async (): Promise<void> => {
+    if (displayContext.mode !== "floating" || windowModeBusy || busyAction !== null) return;
+    const existing = floatingAlwaysOnTopSessionRef.current;
+    if (existing) {
+      restoreFloatingAlwaysOnTop(true);
+      if (!existing.pipWindow.closed) existing.pipWindow.close();
+      return;
+    }
+    const pictureInPicture = documentPictureInPictureApi(window);
+    if (!pictureInPicture) {
+      showNotice("error", "当前 Edge 版本不支持“盯住”悬浮窗，请升级浏览器后重试。");
+      return;
+    }
+    const root = document.getElementById("root");
+    if (!root?.parentNode) {
+      showNotice("error", "无法找到悬浮窗内容容器。");
+      return;
+    }
+
+    setWindowModeBusy(true);
+    let pipWindow: Window | null = null;
+    try {
+      // requestWindow must be invoked directly inside the click gesture.
+      const requestedSize = floatingAlwaysOnTopSizeRef.current;
+      const pipPromise = pictureInPicture.requestWindow(requestedSize);
+      const [createdPipWindow, browserWindow] = await Promise.all([
+        pipPromise,
+        chrome.windows.getCurrent(),
+      ]);
+      pipWindow = createdPipWindow;
+      if (typeof browserWindow.id !== "number") throw new Error("无法识别当前悬浮窗口。");
+
+      copyDocumentStyles(document, pipWindow.document);
+      pipWindow.document.title = "申论智能训练助手 · 已盯住";
+      pipWindow.document.documentElement.lang = "zh-CN";
+      pipWindow.document.body.style.margin = "0";
+      pipWindow.document.body.style.background = "#eef3f0";
+      const marker = document.createComment("shenlun-floating-root");
+      root.parentNode.insertBefore(marker, root);
+
+      let resizeTimer: number | undefined;
+      const onResize = (): void => {
+        if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
+        resizeTimer = window.setTimeout(() => {
+          const size = normalizeFloatingWindowSize({
+            width: pipWindow?.outerWidth,
+            height: pipWindow?.outerHeight,
+          });
+          floatingAlwaysOnTopSizeRef.current = size;
+          void chrome.storage.local.set({ [FLOATING_ALWAYS_ON_TOP_SIZE_KEY]: size });
+        }, 250);
+      };
+      const onPageHide = (): void => {
+        if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
+        restoreFloatingAlwaysOnTop(true);
+      };
+      const session: FloatingAlwaysOnTopSession = {
+        pipWindow,
+        root,
+        marker,
+        browserWindowId: browserWindow.id,
+        onPageHide,
+        onResize,
+      };
+      floatingAlwaysOnTopSessionRef.current = session;
+      pipWindow.addEventListener("pagehide", onPageHide, { once: true });
+      pipWindow.addEventListener("resize", onResize);
+      pipWindow.document.body.append(root);
+      setFloatingAlwaysOnTop(true);
+      await chrome.windows.update(browserWindow.id, { state: "minimized" });
+    } catch (error) {
+      const session = floatingAlwaysOnTopSessionRef.current;
+      if (session) restoreFloatingAlwaysOnTop(true);
+      if (pipWindow && !pipWindow.closed) pipWindow.close();
+      showNotice("error", `盯住悬浮窗失败：${friendlyError(error)}`);
+    } finally {
+      setWindowModeBusy(false);
+    }
+  };
+
   const switchWindowMode = async (): Promise<void> => {
     if (windowModeBusy || busyAction !== null) return;
     if (typeof chrome === "undefined" || !chrome.windows || !chrome.sidePanel) {
@@ -1831,6 +2038,11 @@ export function App(): JSX.Element {
     flushDraftRef.current();
     try {
       if (displayContext.mode === "floating") {
+        const topmostSession = floatingAlwaysOnTopSessionRef.current;
+        if (topmostSession) {
+          restoreFloatingAlwaysOnTop(false);
+          if (!topmostSession.pipWindow.closed) topmostSession.pipWindow.close();
+        }
         if (displayContext.sourceWindowId === null) {
           throw new Error("未找到悬浮窗对应的浏览器窗口，请关闭悬浮窗后从扩展图标重新打开。");
         }
@@ -1894,7 +2106,14 @@ export function App(): JSX.Element {
       <header className="app-header">
         <div className="brand"><span className="brand__mark"><Icon name="book" /></span><span className="brand__copy"><strong>申论智能训练助手</strong><span>LOCAL PRACTICE · PRIVATE CONTEXT</span></span></div>
         <div className="header-actions">
-          <button className={`header-action header-action--mode${displayContext.mode === "pinned" ? " is-active" : ""}`} type="button" aria-label={displayContext.mode === "pinned" ? "取消置顶并切换为悬浮窗" : "置顶到浏览器侧栏"} aria-pressed={displayContext.mode === "pinned"} title={displayContext.mode === "pinned" ? "取消置顶并切换为悬浮窗" : "置顶到浏览器侧栏"} disabled={windowModeBusy || busyAction !== null} onClick={() => void switchWindowMode()}><Icon name="pin" /><span>{displayContext.mode === "pinned" ? "已置顶" : "置顶"}</span></button>
+          {displayContext.mode === "pinned" ? (
+            <button className="header-action header-action--mode is-active" type="button" aria-label="取消置顶并切换为悬浮窗" aria-pressed="true" title="取消置顶并切换为悬浮窗" disabled={windowModeBusy || busyAction !== null} onClick={() => void switchWindowMode()}><Icon name="pin" /><span>已置顶</span></button>
+          ) : (
+            <>
+              <button className={`header-action header-action--mode${floatingAlwaysOnTop ? " is-active" : ""}`} type="button" aria-label={floatingAlwaysOnTop ? "取消盯住悬浮窗" : "盯住悬浮窗并保持在最前"} aria-pressed={floatingAlwaysOnTop} title={floatingAlwaysOnTop ? "取消盯住，恢复普通悬浮窗" : "盯住悬浮窗并保持在其他窗口之前"} disabled={windowModeBusy || busyAction !== null} onClick={() => void toggleFloatingAlwaysOnTop()}><Icon name="pin" /><span>{floatingAlwaysOnTop ? "已盯住" : "盯住"}</span></button>
+              <button className="header-action" type="button" aria-label="回到浏览器侧栏" title="回到浏览器侧栏" disabled={windowModeBusy || busyAction !== null} onClick={() => void switchWindowMode()}><Icon name="panel" /></button>
+            </>
+          )}
           <button className="header-action" type="button" aria-label="重新扫描当前试卷" title="重新扫描当前试卷" disabled={busyAction !== null || windowModeBusy} onClick={() => void scanCurrentPaper()}><Icon name="scan" /></button>
         </div>
       </header>
@@ -1903,7 +2122,7 @@ export function App(): JSX.Element {
 
       {view === "practice" ? <PracticePage bundle={bundle} activeQuestionId={activeQuestionId} settings={settings} clock={clock} saveState={saveState} busyAction={busyAction} pendingSubmission={pendingSubmission} pendingOwnedByThisPanel={pendingSubmission?.ownerContextId === panelContextIdRef.current} preparingRecoveryAvailable={pendingSubmission?.state === "preparing" && Date.now() - pendingSubmission.createdAt >= PREPARING_RECOVERY_DELAY_MS} onScan={() => void scanCurrentPaper()} onSelectQuestion={handleQuestionSelect} onAnswerChange={handleAnswerChange} onPauseToggle={clock.togglePaused} onSave={() => void saveCurrentDraft(true).catch(() => undefined)} onClear={() => setClearDialogOpen(true)} onSubmitQuestion={() => void submitWithProvider("single")} onSubmitFull={() => void submitWithProvider("full")} onResolvePendingSubmission={(sent) => void resolvePendingSubmission(sent)} onTakeOverPendingSubmission={() => void takeOverPendingSubmission()} onRecoverPreparingSubmission={() => void recoverPreparingSubmission()} onSaveFeedback={saveFeedback} onSaveProjectUrl={saveProjectUrl} onRebindConversation={rebindConversation} onOpenConversation={openConversation} onGradingTargetChange={changeGradingTarget} /> : null}
       {view === "history" ? <HistoryPage items={history} loading={historyLoading || busyAction === "scan"} onRefresh={() => void loadHistory()} onRestore={(attemptId) => void restoreHistory(attemptId)} /> : null}
-      {view === "settings" ? <SettingsPage settings={settings} saving={settingsSaving} onSave={saveSettings} onOpenChatGPT={openChatGPT} onOpenUrl={openConversation} /> : null}
+      {view === "settings" ? <SettingsPage settings={settings} saving={settingsSaving} dataDeleting={dataDeleting} onSave={saveSettings} onRequestDataDeletion={setDataDeletionRequest} onOpenChatGPT={openChatGPT} onOpenUrl={openConversation} /> : null}
 
       <nav className="bottom-nav" aria-label="主导航">
         <button className={view === "practice" ? "is-active" : ""} type="button" disabled={busyAction !== null} onClick={() => setView("practice")}><Icon name="book" />答题</button>
@@ -1913,6 +2132,7 @@ export function App(): JSX.Element {
 
       <DuplicateDialog paper={duplicate?.paper ?? null} attempts={duplicate?.attempts ?? []} busy={busyAction === "scan"} onContinue={(attemptId) => void continueDuplicateAttempt(attemptId)} onCreate={() => { if (duplicate) void createAttempt(duplicate.paper, duplicate.activeQuestionId); }} onCancel={() => void cancelDuplicate()} />
       <ConfirmDialog open={clearDialogOpen} title="清空本题答案？" description="清空后会立即覆盖本题已保存的草稿，此操作无法撤销。" confirmLabel="确认清空" destructive onConfirm={confirmClear} onCancel={() => setClearDialogOpen(false)} />
+      <ConfirmDialog open={dataDeletionRequest !== null} title="删除所选本地数据？" description={dataDeletionRequest?.practiceData && dataDeletionRequest.settings ? "将永久删除全部练习、批改记录、设置、自定义提示词和 API Key。" : dataDeletionRequest?.practiceData ? "将永久删除试卷、答案、计时、批改结果和对话绑定；应用设置会保留。" : "将永久删除 Project、API Key、自定义提示词和显示偏好；练习记录会保留。"} confirmLabel="确认删除" destructive busy={dataDeleting} onConfirm={() => void confirmLocalDataDeletion()} onCancel={() => { if (!dataDeleting) setDataDeletionRequest(null); }} />
     </div>
   );
 }

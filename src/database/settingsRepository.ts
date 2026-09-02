@@ -17,6 +17,10 @@ import {
   type DatabaseProvider,
 } from "./indexedDB";
 
+function promptTemplateOrDefault(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
 export class SettingsRepository {
   public constructor(private readonly databaseProvider: DatabaseProvider = getDefaultDatabase) {}
 
@@ -38,6 +42,14 @@ export class SettingsRepository {
       gradingModel: isGradingModelForEngine(gradingEngine, merged.gradingModel)
         ? merged.gradingModel
         : defaultModelForEngine(gradingEngine),
+      singleQuestionPromptTemplate: promptTemplateOrDefault(
+        merged.singleQuestionPromptTemplate,
+        DEFAULT_SETTINGS.singleQuestionPromptTemplate,
+      ),
+      fullPaperPromptTemplate: promptTemplateOrDefault(
+        merged.fullPaperPromptTemplate,
+        DEFAULT_SETTINGS.fullPaperPromptTemplate,
+      ),
     };
   }
 
@@ -71,9 +83,20 @@ export class SettingsRepository {
       gradingEngine,
       gradingModel: defaultModelForEngine(gradingEngine),
     };
-    store.put(settings);
+    const normalizedSettings: AppSettings = {
+      ...settings,
+      singleQuestionPromptTemplate: promptTemplateOrDefault(
+        settings.singleQuestionPromptTemplate,
+        DEFAULT_SETTINGS.singleQuestionPromptTemplate,
+      ),
+      fullPaperPromptTemplate: promptTemplateOrDefault(
+        settings.fullPaperPromptTemplate,
+        DEFAULT_SETTINGS.fullPaperPromptTemplate,
+      ),
+    };
+    store.put(normalizedSettings);
     await completed;
-    return settings;
+    return normalizedSettings;
   }
 }
 

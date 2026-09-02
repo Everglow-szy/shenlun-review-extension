@@ -2,7 +2,7 @@
 
 这是一个面向 Microsoft Edge / Chromium Manifest V3 的本地优先浏览器扩展。它从当前申论网页提取试卷，在 Edge Side Panel 中提供独立答题、字数统计、计时、草稿恢复、历史练习，以及 ChatGPT 网页或 DeepSeek API 批改。
 
-ChatGPT 使用已登录的网页版，不需要 API Key；DeepSeek 使用官方 API，需要在设置中填写 Key，并按官方规则产生费用。API Key、试卷、答案、计时、对话绑定和批改结果均保存在浏览器扩展自己的 IndexedDB 中，其中 API Key 是本机明文存储，不会写入源码或日志。输入停止前的短暂 debounce 窗口与每次计时状态切换都会先使用扩展源 `localStorage` 做同步写前镜像，IndexedDB 保存成功后再精确清除对应镜像。
+ChatGPT 使用已登录的网页版，不需要 API Key；DeepSeek 使用官方 API，需要在设置中填写 Key，并按官方规则产生费用。API Key、自定义提示词、试卷、答案、计时、对话绑定和批改结果均保存在浏览器扩展自己的 IndexedDB 中，其中 API Key 是本机明文存储，不会写入源码或日志。输入停止前的短暂 debounce 窗口与每次计时状态切换都会先使用扩展源 `localStorage` 做同步写前镜像，IndexedDB 保存成功后再精确清除对应镜像。
 
 ## 安装
 
@@ -41,7 +41,7 @@ npm run build
 7. 点击“全部提交批改”可交接当前 Attempt 下的整卷 Prompt。
 8. 扩展等待引擎完成回复，并自动把内容保存到“AI 批改结果”；可按批改次数切换历史结果。
 
-顶部“已置顶”按钮默认表示扩展固定在浏览器侧栏。点击后会切换为独立悬浮窗，可拖动系统窗口边缘自由调整大小；再次点击“置顶”会恢复到原浏览器窗口的侧栏。扩展会记住悬浮窗上次使用的宽高。这里的“置顶”指固定到 Edge 侧栏，不是让窗口始终覆盖在其他 Windows 程序之上。
+顶部“已置顶”按钮默认表示扩展固定在浏览器侧栏。点击后会切换为可自由缩放的普通悬浮窗。悬浮窗顶部提供“盯住”按钮：点击后进入 Document Picture-in-Picture 始终在前窗口，点击页面外部也不会被其他窗口遮住，并仍可拖动边缘调整大小；再次点击“已盯住”会恢复普通悬浮窗。旁边的侧栏图标可直接回到原浏览器侧栏。
 
 网页引擎会在非活动标签页中自动填充、发送并读取回复，不会主动切走当前试卷页；DeepSeek 则由扩展后台直接请求官方接口。需要核对网页原始对话或 API 用量时，可在批改结果区点击“打开页面查看”。若网页输入框里已有其他未发送内容，扩展会拒绝覆盖它。
 
@@ -55,6 +55,8 @@ npm run build
 
 - ChatGPT 网页：Project 名称和 Project URL；具体模型沿用该 Project 当前的默认模型。
 - DeepSeek API：官方 Base URL 和 API Key；提交界面可选择 V4 Flash / V4 Pro 及思考 / 非思考模式。
+- 提示词模板：分别编辑单题和整卷模板，支持使用界面列出的动态变量，并可一键恢复默认模板。
+- 本机数据管理：可分别删除“练习与批改记录”或“设置与密钥”，也可以同时删除全部数据。
 
 切换引擎时，第二个下拉框会自动切换到该引擎的默认模型并立即保存。DeepSeek Base URL 仅允许 `https://api.deepseek.com` 或兼容路径 `https://api.deepseek.com/v1`。
 
@@ -113,7 +115,7 @@ PaperDefinition
 | `conversationClaims` | `conversationUrl` | `attemptId` | Conversation URL 的永久 Attempt 所有权 |
 | `submissionOutbox` | `requestId` | `attemptId`、`status` | 不可变 Prompt、答案/计时快照及提交状态机 |
 | `feedback` | `feedbackId` | `attemptId`、`questionId`、`createdAt` | 本题或整卷批改文本 |
-| `settings` | `key` | — | 批改引擎、网页地址、DeepSeek Key 与答题显示设置 |
+| `settings` | `key` | — | 批改引擎、网页地址、DeepSeek Key、自定义提示词与答题显示设置 |
 
 持久化实体都包含 `schemaVersion`。数据库升级逻辑集中在 `src/database/indexedDB.ts`。
 
@@ -223,6 +225,7 @@ Manifest 使用：
 
 - 已适配 `spa.fenbi.com/ti/view/paper/...?...routecs=shenlun` 的小题标签遍历、材料、题干和参考答案结构；扫描会自动读取同组全部小题并恢复网页原先选中的题目。其他申论网站仍使用通用启发式 Adapter，结构差异较大时需要按上面的方式增加专用 Adapter。
 - ChatGPT 网页自动化依赖其页面 DOM。输入框、Project 导航或重命名菜单改版后，需要维护集中 selector。
+- “盯住”使用 Chromium 的 Document Picture-in-Picture；同一浏览器配置同时只能存在一个此类始终在前窗口，进入该模式时普通悬浮窗会最小化作为承载页。
 - DeepSeek 模型名称和可用性可能随官方 API 更新；当前配置以 V4 Flash / V4 Pro 为准。
 - 扩展无法绕过 ChatGPT 登录；未登录时会提示用户先登录。网页 DOM 改版时可使用“手动补录批改结果”兜底。
 - 草稿镜像、IndexedDB 与计时 checkpoint 都是浏览器本地存储；浏览器配置目录本身损坏或被清理时无法恢复。

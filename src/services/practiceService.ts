@@ -29,7 +29,10 @@ import { ConversationBindingRepository } from "../database/conversationBindingRe
 import { FeedbackRepository } from "../database/feedbackRepository";
 import {
   getDefaultDatabase,
+  STORE_NAMES,
+  transactionToPromise,
   type DatabaseProvider,
+  type StoreName,
 } from "../database/indexedDB";
 import { PaperRepository } from "../database/paperRepository";
 import { PracticeRepository } from "../database/practiceRepository";
@@ -78,7 +81,23 @@ function isConstraintError(error: unknown): boolean {
   );
 }
 
+export interface LocalDataDeletionSelection {
+  readonly practiceData: boolean;
+  readonly settings: boolean;
+}
+
+const PRACTICE_DATA_STORES: readonly StoreName[] = [
+  STORE_NAMES.papers,
+  STORE_NAMES.attempts,
+  STORE_NAMES.questions,
+  STORE_NAMES.conversationBindings,
+  STORE_NAMES.conversationClaims,
+  STORE_NAMES.submissionOutbox,
+  STORE_NAMES.feedback,
+];
+
 export class PracticeService {
+  private readonly databaseProvider: DatabaseProvider;
   private readonly papers: PaperRepository;
   private readonly attempts: AttemptRepository;
   private readonly conversations: ConversationBindingRepository;
@@ -88,6 +107,7 @@ export class PracticeService {
   private readonly submissionOutbox: SubmissionOutboxRepository;
 
   public constructor(databaseProvider: DatabaseProvider = getDefaultDatabase) {
+    this.databaseProvider = databaseProvider;
     this.papers = new PaperRepository(databaseProvider);
     this.attempts = new AttemptRepository(databaseProvider);
     this.conversations = new ConversationBindingRepository(databaseProvider);
@@ -279,6 +299,7 @@ export class PracticeService {
     if (!question) {
       throw new Error("Question does not belong to the supplied attemptId");
     }
+    const settings = await this.settings.get();
     return {
       mode: "single-question",
       attemptId,
@@ -288,6 +309,7 @@ export class PracticeService {
         paperName: bundle.paper.paperName,
         attemptId,
         question,
+        template: settings.singleQuestionPromptTemplate,
       }),
       binding: bundle.conversation,
     };
@@ -301,6 +323,7 @@ export class PracticeService {
     if (bundle.questions.length === 0 || bundle.questions.some((question) => !question.userAnswer.trim())) {
       throw new Error("请先完成当前试卷的全部题目，再提交整卷批改。");
     }
+    const settings = await this.settings.get();
     return {
       mode: "full-paper",
       attemptId,
@@ -310,6 +333,7 @@ export class PracticeService {
         attemptId,
         questions: bundle.questions,
         totalElapsedSeconds: bundle.attempt.totalElapsedSeconds,
+        template: settings.fullPaperPromptTemplate,
       }),
       binding: bundle.conversation,
     };
@@ -401,6 +425,21 @@ export class PracticeService {
 
   public async saveSettings(patch: AppSettingsPatch): Promise<AppSettings> {
     return this.settings.save(patch);
+  }
+
+  public async clearLocalData(selection: LocalDataDeletionSelection): Promise<void> {
+    const stores = [
+      ...(selection.practiceData ? PRACTICE_DATA_STORES : []),
+      ...(selection.settings ? [STORE_NAMES.settings] : []),
+    ];
+    if (stores.length === 0) return;
+    const database = await this.databaseProvider();
+    const transaction = database.transaction(stores, "readwrite");
+    const completed = transactionToPromise(transaction);
+    for (const storeName of stores) {
+      transaction.objectStore(storeName).clear();
+    }
+    await completed;
   }
 
   private async requireBundle(attemptId: AttemptId): Promise<AttemptBundle> {

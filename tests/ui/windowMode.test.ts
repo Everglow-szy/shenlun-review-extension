@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   consumeRestoreWithoutScan,
+  documentPictureInPictureApi,
   floatingPageUrl,
   normalizeFloatingWindowSize,
   parseAppDisplayContext,
@@ -31,5 +32,14 @@ describe("side panel and floating window mode", () => {
     requestRestoreWithoutScan(window.localStorage);
     expect(consumeRestoreWithoutScan(window.localStorage)).toBe(true);
     expect(consumeRestoreWithoutScan(window.localStorage)).toBe(false);
+  });
+
+  it("feature-detects the always-on-top document window API", () => {
+    expect(documentPictureInPictureApi(window)).toBeNull();
+    const requestWindow = async (): Promise<Window> => window;
+    const supportedWindow = {
+      documentPictureInPicture: { window: null, requestWindow },
+    } as unknown as Window;
+    expect(documentPictureInPictureApi(supportedWindow)?.requestWindow).toBe(requestWindow);
   });
 });

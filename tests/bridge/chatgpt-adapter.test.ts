@@ -237,6 +237,29 @@ describe("ChatGPTAdapter", () => {
     ).resolves.toContain("16 / 20");
   });
 
+  it("reacquires a replaced Markdown body before saving the response", async () => {
+    const composer = document.querySelector<HTMLElement>("#prompt-textarea");
+    if (!composer) throw new Error("composer fixture missing");
+    composer.textContent = "prompt to grade";
+    const button = document.createElement("button");
+    button.dataset.testid = "send-button";
+    button.addEventListener("click", () => {
+      composer.textContent = "";
+      const response = document.createElement("article");
+      response.dataset.turn = "assistant";
+      response.innerHTML = '<div class="markdown">## 得分\n16 / 20</div>';
+      document.querySelector("main")?.append(response);
+      globalThis.setTimeout(() => {
+        response.innerHTML = '<div class="markdown">## 得分\n16 / 20\n\n## 修改建议\n这是最后一段。</div>';
+      }, 40);
+    });
+    document.body.append(button);
+
+    await expect(
+      new ChatGPTAdapter(document).submitPromptAndWaitForResponse(2_000),
+    ).resolves.toContain("这是最后一段");
+  });
+
   it("does not treat an existing conversation URL as proof that send succeeded", async () => {
     vi.useFakeTimers();
     const composer = document.querySelector<HTMLElement>("#prompt-textarea");

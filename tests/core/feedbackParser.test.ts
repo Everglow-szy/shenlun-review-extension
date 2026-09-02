@@ -32,4 +32,15 @@ describe("feedback parser", () => {
       { title: "批改详情", content: "暂时无法形成结构化结果。" },
     ]);
   });
+
+  it("preserves text that appears before the first recognized module", () => {
+    const raw = "以下是本次完整批改。\n\n## 得分\n16 / 20\n\n## 修改建议\n补充依据。";
+    const modules = parseFeedbackModules(raw);
+    expect(modules[0]).toEqual({ title: "补充说明", content: "以下是本次完整批改。" });
+    expect(modules.map((module) => module.title)).toEqual([
+      "补充说明",
+      "得分",
+      "修改建议",
+    ]);
+  });
 });

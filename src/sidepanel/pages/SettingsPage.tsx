@@ -1,12 +1,21 @@
 import { useEffect, useState } from "react";
 import { ChatGPTAdapter } from "../../adapters/ChatGPTAdapter";
-import { normalizeDeepSeekBaseUrl } from "../../services/deepSeekProvider";
+import {
+  DEFAULT_FULL_PAPER_PROMPT_TEMPLATE,
+  DEFAULT_SINGLE_QUESTION_PROMPT_TEMPLATE,
+  FULL_PAPER_PROMPT_PLACEHOLDERS,
+  SINGLE_QUESTION_PROMPT_PLACEHOLDERS,
+  normalizeDeepSeekBaseUrl,
+  type LocalDataDeletionSelection,
+} from "../../services";
 import type { AppSettings } from "../../types";
 
 interface SettingsPageProps {
   settings: AppSettings;
   saving: boolean;
+  dataDeleting: boolean;
   onSave: (settings: AppSettings) => Promise<void>;
+  onRequestDataDeletion: (selection: LocalDataDeletionSelection) => void;
   onOpenChatGPT: () => void;
   onOpenUrl: (url: string) => void;
 }
@@ -28,11 +37,16 @@ function Toggle({ checked, label, description, onChange }: ToggleProps): JSX.Ele
   );
 }
 
-export function SettingsPage({ settings, saving, onSave, onOpenChatGPT, onOpenUrl }: SettingsPageProps): JSX.Element {
+export function SettingsPage({ settings, saving, dataDeleting, onSave, onRequestDataDeletion, onOpenChatGPT, onOpenUrl }: SettingsPageProps): JSX.Element {
   const [draft, setDraft] = useState(settings);
   const [urlError, setUrlError] = useState("");
   const [deepseekUrlError, setDeepseekUrlError] = useState("");
+  const [promptError, setPromptError] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
+  const [deleteSelection, setDeleteSelection] = useState<LocalDataDeletionSelection>({
+    practiceData: true,
+    settings: false,
+  });
   useEffect(() => setDraft(settings), [settings]);
 
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]): void => {
@@ -51,6 +65,10 @@ export function SettingsPage({ settings, saving, onSave, onOpenChatGPT, onOpenUr
       normalizedUrl = candidate;
     }
     if (!draft.projectName.trim()) return;
+    if (!draft.singleQuestionPromptTemplate.trim() || !draft.fullPaperPromptTemplate.trim()) {
+      setPromptError("单题和整卷提示词模板均不能为空；如需恢复，请点击“恢复默认模板”。");
+      return;
+    }
     const deepseekApiBaseUrl = normalizeDeepSeekBaseUrl(draft.deepseekApiBaseUrl);
     if (!deepseekApiBaseUrl) {
       setDeepseekUrlError("目前仅支持官方地址 https://api.deepseek.com。");
@@ -58,6 +76,7 @@ export function SettingsPage({ settings, saving, onSave, onOpenChatGPT, onOpenUr
     }
     setUrlError("");
     setDeepseekUrlError("");
+    setPromptError("");
     try {
       await onSave({
         ...draft,
@@ -95,12 +114,40 @@ export function SettingsPage({ settings, saving, onSave, onOpenChatGPT, onOpenUr
         <p className="muted">ChatGPT 会在后台标签页发送并等待结果；DeepSeek 会直接请求官方接口。需要核对来源时，可在批改结果中点击“打开页面查看”。</p>
       </section>
 
+      <section className="card settings-card" aria-labelledby="prompt-template-settings">
+        <div className="section-heading"><div><span className="eyebrow">可自定义</span><h3 id="prompt-template-settings">提示词模板</h3></div><button className="text-button" type="button" onClick={() => { update("singleQuestionPromptTemplate", DEFAULT_SINGLE_QUESTION_PROMPT_TEMPLATE); update("fullPaperPromptTemplate", DEFAULT_FULL_PAPER_PROMPT_TEMPLATE); setPromptError(""); }}>恢复默认模板</button></div>
+        <p className="muted">点击展开后可修改。花括号变量会在提交时替换为本次练习的真实内容，未使用的变量不会额外附加。</p>
+        <details className="settings-disclosure">
+          <summary><span>单题批改模板</span><strong>点击编辑</strong></summary>
+          <div className="settings-disclosure__body">
+            <p className="template-placeholders">可用变量：{SINGLE_QUESTION_PROMPT_PLACEHOLDERS.map((name) => `{{${name}}}`).join("、")}</p>
+            <label className="field"><span>模板内容</span><textarea rows={18} value={draft.singleQuestionPromptTemplate} onChange={(event) => { update("singleQuestionPromptTemplate", event.target.value); setPromptError(""); }} spellCheck={false} /></label>
+          </div>
+        </details>
+        <details className="settings-disclosure">
+          <summary><span>整卷批改模板</span><strong>点击编辑</strong></summary>
+          <div className="settings-disclosure__body">
+            <p className="template-placeholders">可用变量：{FULL_PAPER_PROMPT_PLACEHOLDERS.map((name) => `{{${name}}}`).join("、")}</p>
+            <label className="field"><span>模板内容</span><textarea rows={16} value={draft.fullPaperPromptTemplate} onChange={(event) => { update("fullPaperPromptTemplate", event.target.value); setPromptError(""); }} spellCheck={false} /></label>
+          </div>
+        </details>
+        {promptError ? <p className="field-error">{promptError}</p> : null}
+      </section>
+
       <section className="card settings-card" aria-labelledby="answer-settings">
         <div className="section-heading"><div><span className="eyebrow">Side Panel</span><h3 id="answer-settings">答题显示与保存</h3></div></div>
         <Toggle checked={draft.autoSave} label="自动保存草稿" description="停止输入 700ms 后保存，计时每 10 秒 checkpoint。" onChange={(value) => update("autoSave", value)} />
         <Toggle checked={draft.showWordCount} label="显示字数" onChange={(value) => update("showWordCount", value)} />
         <Toggle checked={draft.showQuestionTimer} label="显示题目计时" onChange={(value) => update("showQuestionTimer", value)} />
         <Toggle checked={draft.showTotalTimer} label="显示总计时" onChange={(value) => update("showTotalTimer", value)} />
+      </section>
+
+      <section className="card settings-card danger-card" aria-labelledby="local-data-settings">
+        <div className="section-heading"><div><span className="eyebrow">本机数据管理</span><h3 id="local-data-settings">选择要删除的数据</h3></div></div>
+        <p className="muted">数据只会从当前浏览器扩展中删除。请先勾选类别，确认后无法恢复。</p>
+        <label className="data-delete-option"><input type="checkbox" checked={deleteSelection.practiceData} onChange={(event) => setDeleteSelection((current) => ({ ...current, practiceData: event.target.checked }))} /><span><strong>练习与批改记录</strong><small>试卷、答案、计时、历史批改、对话绑定和待提交记录</small></span></label>
+        <label className="data-delete-option"><input type="checkbox" checked={deleteSelection.settings} onChange={(event) => setDeleteSelection((current) => ({ ...current, settings: event.target.checked }))} /><span><strong>设置与密钥</strong><small>ChatGPT Project、DeepSeek API Key、提示词模板和显示偏好</small></span></label>
+        <button className="button button--danger" type="button" disabled={dataDeleting || (!deleteSelection.practiceData && !deleteSelection.settings)} onClick={() => onRequestDataDeletion(deleteSelection)}>{dataDeleting ? "删除中…" : "删除所选本地数据"}</button>
       </section>
 
       <div className="settings-savebar"><span>{JSON.stringify(draft) === JSON.stringify(settings) ? "设置已保存" : "有未保存的更改"}</span><button className="button button--primary" type="button" disabled={saving || !draft.projectName.trim()} onClick={() => void save()}>{saving ? "保存中…" : "保存设置"}</button></div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   countShenlunCharacters,
   defaultModelForEngine,
@@ -129,6 +129,7 @@ function FeedbackPanel({ questionFeedback, paperFeedback, projectUrl, conversati
   const [rawText, setRawText] = useState("");
   const [scope, setScope] = useState<"question" | "paper">("question");
   const [revisionIndex, setRevisionIndex] = useState(0);
+  const pasteFieldRef = useRef<HTMLTextAreaElement>(null);
   const records = scope === "question" ? questionFeedback : paperFeedback;
   const latest = records[revisionIndex] ?? records[0];
   const modules = useMemo(
@@ -151,7 +152,7 @@ function FeedbackPanel({ questionFeedback, paperFeedback, projectUrl, conversati
     }
   };
   const focusPasteField = (): void => {
-    document.getElementById("feedback-input")?.focus();
+    pasteFieldRef.current?.focus();
   };
 
   return (
@@ -180,13 +181,17 @@ function FeedbackPanel({ questionFeedback, paperFeedback, projectUrl, conversati
           {latest.feedback.engine && latest.feedback.model ? <p className="feedback-result__provider">{gradingEngineLabel(latest.feedback.engine)} · {gradingModelLabel(latest.feedback.model)}</p> : null}
           {latest.feedback.score !== undefined ? <p className="feedback-result__score"><span>得分</span><strong>{latest.feedback.score}{latest.feedback.maxScore !== undefined ? ` / ${latest.feedback.maxScore}` : ""}</strong></p> : null}
           <div className="feedback-modules">
-            {modules.map((module) => (
-              <section className="feedback-module" key={module.title}>
+            {modules.map((module, index) => (
+              <section className="feedback-module" key={`${module.title}-${index}`}>
                 <h4>{module.title}</h4>
                 <div className="reading-text">{module.content}</div>
               </section>
             ))}
           </div>
+          <details className="feedback-raw">
+            <summary><span>原始完整内容</span><strong>{latest.feedback.rawText.length} 字符</strong></summary>
+            <div className="reading-text">{latest.feedback.rawText}</div>
+          </details>
         </div>
       ) : <p className="muted">提交答案后，扩展会等待所选引擎完成批改，并自动把结果保存到这里。</p>}
       {projectUrl !== undefined ? <details className="conversation-binding">
@@ -201,7 +206,7 @@ function FeedbackPanel({ questionFeedback, paperFeedback, projectUrl, conversati
         <summary>手动补录批改结果</summary>
         <div className="feedback-paste">
           {scope === "question" && !questionFeedbackAllowed ? <p className="muted">请先提交本题或整卷，再保存本题批改结果。</p> : null}
-          <textarea id="feedback-input" rows={5} value={rawText} onChange={(event) => setRawText(event.target.value)} placeholder="自动读取失败时，可在此粘贴批改结果…" />
+          <textarea ref={pasteFieldRef} id="feedback-input" rows={5} value={rawText} onChange={(event) => setRawText(event.target.value)} placeholder="自动读取失败时，可在此粘贴批改结果…" />
           <div className="feedback-paste__actions">
             <button className="button button--quiet" type="button" onClick={focusPasteField}>定位输入框</button>
             <button className="button button--secondary" type="button" disabled={feedbackBusy || !rawText.trim() || (scope === "question" && !questionFeedbackAllowed)} onClick={() => void save()}>{feedbackBusy ? "保存中…" : "保存批改结果"}</button>

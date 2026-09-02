@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
 
-type IconName = "book" | "clock" | "history" | "pause" | "pin" | "play" | "scan" | "settings" | "sparkles" | "success";
+type IconName = "book" | "clock" | "history" | "panel" | "pause" | "pin" | "play" | "scan" | "settings" | "sparkles" | "success";
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName;
@@ -10,6 +10,7 @@ const paths: Record<IconName, JSX.Element> = {
   book: <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11a2 2 0 0 1 2 2v14a2 2 0 0 0-2-2H6.5A2.5 2.5 0 0 0 4 19.5v-14Zm16 0A2.5 2.5 0 0 0 17.5 3H13v16a2 2 0 0 1 2-2h2.5a2.5 2.5 0 0 1 2.5 2.5v-14Z" />,
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></>,
   history: <><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></>,
+  panel: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></>,
   pause: <><path d="M8 5v14M16 5v14" /></>,
   pin: <><path d="m9 3 6 6M7.5 8.5l8 8M13.5 5.5l3-2 4 4-2 3M10.5 18.5 5 24l.5-6.5L8 15l-2.5-2.5 7-7" /></>,
   play: <path d="m9 6 9 6-9 6V6Z" />,

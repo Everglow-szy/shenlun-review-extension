@@ -556,9 +556,9 @@ export class ChatGPTAdapter {
     ).length;
     await this.submitPrompt();
 
-    let responseElement: HTMLElement;
+    let responseTurn: HTMLElement;
     try {
-      responseElement = await waitForCondition(
+      responseTurn = await waitForCondition(
         () => {
           const messages = queryAllFirstGroup<HTMLElement>(
             this.page,
@@ -572,7 +572,7 @@ export class ChatGPTAdapter {
             queryFirst(this.page, ChatGPTSelectors.stopGeneratingButton) !== null ||
             latest.matches("[aria-busy='true']") ||
             queryFirst(latest, ChatGPTSelectors.ariaBusy) !== null;
-          return !generating && readableElementText(body) ? body : null;
+          return !generating && readableElementText(body) ? latest : null;
         },
         { root: this.page.documentElement, timeoutMs },
       );
@@ -584,9 +584,26 @@ export class ChatGPTAdapter {
       );
     }
 
-    await waitForDomStable({ root: responseElement, quietMs: 700, timeoutMs: 5_000 })
+    // ChatGPT may replace the inner Markdown node while streaming. Observe the
+    // turn's parent and reacquire the latest body after it settles instead of
+    // reading a detached, partially generated node.
+    await waitForDomStable({
+      root: responseTurn.parentElement ?? responseTurn,
+      quietMs: 1_600,
+      timeoutMs: Math.min(15_000, timeoutMs),
+    })
       .catch(() => undefined);
-    const responseText = readableElementText(responseElement);
+    const finalMessages = queryAllFirstGroup<HTMLElement>(
+      this.page,
+      ChatGPTSelectors.assistantMessages,
+    );
+    const finalTurn = finalMessages.length > assistantCountBefore
+      ? finalMessages[finalMessages.length - 1]
+      : null;
+    const finalBody = finalTurn
+      ? queryFirst<HTMLElement>(finalTurn, ChatGPTSelectors.assistantMessageBody) ?? finalTurn
+      : null;
+    const responseText = finalBody ? readableElementText(finalBody) : "";
     if (!responseText) {
       throw new ChatGPTAdapterError(
         "CHATGPT_DELIVERY_UNCERTAIN",
